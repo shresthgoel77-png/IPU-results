@@ -11,7 +11,7 @@ app.use(express.json());
 app.use(express.static('public'));
 
 const sessionStore = {};
-const TARGET_URL = '';
+const TARGET_URL = 'https://examweb.ggsipu.ac.in/web/login.jsp';
 
 /**
  * STEP 1: Fetch CAPTCHA and keep the browser instance alive
@@ -86,57 +86,137 @@ app.post('/api/login-and-scrape', async (req, res) => {
             page.waitForNavigation({ waitUntil: 'networkidle2' })
         ]);
 
-        // 3. NEW WORKFLOW: Handle the Dashboard dropdown and 'GET RESULT' button
-        // Wait for the dropdown to appear on the screen
-        await page.waitForSelector('select'); 
+        // --- 1. DIAGNOSTIC DUMP (Run immediately after login networkidle2) ---
+        const fs = require('fs');
         
-        // Select the requested semester. Fallback to 'ALL' if the client didn't provide one.
+        // Catch diagnostics without halting the main script if they fail
+        try {
+            await page.screenshot({ path: 'dashboard_diagnostic.png', fullPage: true });
+
+            // Extract Dropdowns
+            const selects = await page.evaluate(() => {
+                return Array.from(document.querySelectorAll('select')).map(s => ({
+                    id: s.id,
+                    name: s.name,
+                    options: Array.from(s.options).map(o => ({ value: o.value, text: o.text }))
+                }));
+            });
+            console.log("\n=== DIAGNOSTIC: DROPDOWNS ===");
+            console.log(JSON.stringify(selects, null, 2));
+
+            // Extract Buttons
+            const buttons = await page.evaluate(() => {
+                return Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a')).map(b => ({
+                    tag: b.tagName,
+                    id: b.id,
+                    name: b.name,
+                    value: b.value || b.textContent.trim(),
+                    className: b.className
+                }));
+            });
+            console.log("\n=== DIAGNOSTIC: BUTTONS ===");
+            console.log(JSON.stringify(buttons, null, 2));
+
+            // Save raw HTML before interacting
+            const rawContent = await page.content();
+            fs.writeFileSync('dashboard.html', rawContent);
+            console.log("=== HTML Dumped to dashboard.html ===\n");
+        } catch (diagErr) {
+            console.log("Diagnostic dump failed, continuing...", diagErr);
+        }
+        // ------------------------------------------------------------------
+
+        // --- 2. BULLETPROOF DROPDOWN & FETCH LOGIC ---
+        // TODO: Update these generic selectors with the exact IDs from the diagnostic dump logs!
+        const SEMESTER_DROPDOWN_ID = 'select'; // Change this once you know the exact ID
+        const SUBMIT_BUTTON_ID = 'input[type="submit"]'; // Change this to the exact button ID or exact selector
+
         const targetSemester = semester || 'ALL'; 
-        await page.select('select', targetSemester);
+        
+        // Wait for Dropdown
+        await page.waitForSelector(SEMESTER_DROPDOWN_ID, { timeout: 15000 });
+        
+        // Resilient Dropdown Selection via Native Evaluation (Bypasses rendering/overlap issues)
+        await page.evaluate((selector, val) => {
+            const selectEl = document.querySelector(selector);
+            if (selectEl) {
+                // If the option exists, select it
+                const optionExists = Array.from(selectEl.options).some(opt => opt.value === val);
+                if (optionExists) {
+                    selectEl.value = val;
+                } else if (selectEl.options.length > 0) {
+                    selectEl.value = selectEl.options[1].value; // fallback
+                }
+                // Trigger Change Events (crucial for ASP.NET / __doPostBack)
+                selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }, SEMESTER_DROPDOWN_ID, targetSemester);
+        
+        // Give AJAX a moment if there's a postback after selecting semester
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
-        // Click the 'GET RESULT' button and wait for the marks table page to load
-        // ... (Previous code remains the same up to clicking "GET RESULT") ...
+        // Wait for Submit button to be present
+        await page.waitForSelector(SUBMIT_BUTTON_ID, { timeout: 15000 });
 
+        // Resilient Click and Wait
+        console.log("Attempting to click submit button and fetch marks...");
         await Promise.all([
-            page.evaluate(() => {
-                const elements = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a'));
-                const getResultBtn = elements.find(el => (el.textContent || el.value || '').includes('GET RESULT'));
-                if (getResultBtn) getResultBtn.click();
-            }),
-            page.waitForNavigation({ waitUntil: 'networkidle2' })
+            page.evaluate((selector) => {
+                const btn = document.querySelector(selector);
+                if (btn) btn.click();
+            }, SUBMIT_BUTTON_ID),
+            // We use a promise race: wait for network payload OR a timeout.
+            // This handles BOTH traditional page navigations and AJAX table redraws.
+            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => console.log('Navigation wait completed or timed out (AJAX update likely).'))
         ]);
 
-        // Capture a clean screenshot of the results table
-        const tableElement = await page.$('table'); // Target the main table
+        // Explicitly wait for the target table block to render
+        await page.waitForSelector('table', { timeout: 15000 }).catch(() => console.log("Warning: No table found immediately after click."));
+
+        // Capture Screenshot of the marks area safely
+        const tableElement = await page.$('table'); 
         let imageBase64 = null;
         if (tableElement) {
             const imageBuffer = await tableElement.screenshot();
             imageBase64 = imageBuffer.toString('base64');
         }
 
-        // 4. Read the page content containing the results
-        const html = await page.content();
-        
-        // 5. Feed to Cheerio for extraction
-        const $ = cheerio.load(html);
+        // --- 3. ADVANCED TABLE SCRAPING (Cheerio) ---
+        const finalHtml = await page.content();
+        const $ = cheerio.load(finalHtml);
         const scrapedData = [];
         
-        // Extract based on the actual GGSIPU table structure (8 columns: S.No, Paper Code, Paper Name, Credits, Type, Internal, External, Total)
+        // Resilient traversal of tables (handles nested layouts)
         $('table tr').each((index, element) => {
-            if (index === 0) return; // Skip headers
-            const columns = $(element).find('td');
+            // Find all columns in this row (some tables use th for the header, some use td)
+            const columns = $(element).find('td, th');
             
-            // Ensure row has the expected number of columns (>=8)
+            // STRICT Enforcement: A valid marksheet row in GGSIPU must span horizontally.
+            // If it's less than 8, it's a layout table, a nested table, or empty/header spacer.
             if (columns.length >= 8) {
+                // Ensure it's not a header row 
+                const rowText = $(element).text().toLowerCase();
+                if (rowText.includes('paper name') || rowText.includes('sr. no')) return; // Skip headers
+
+                const code = $(columns[1]).text().trim();
+                const name = $(columns[2]).text().trim();
+                
+                // Extra safety: If there's no subject code, it's a dud row
+                if (!code || code === '') return;
+
                 scrapedData.push({
-                    code: $(columns[1]).text().trim(),
-                    name: $(columns[2]).text().trim(),
+                    code: code,
+                    name: name,
                     internal: parseInt($(columns[5]).text().trim()) || 0,
                     external: parseInt($(columns[6]).text().trim()) || 0,
                     total: parseInt($(columns[7]).text().trim()) || 0
                 });
             }
         });
+
+        if (scrapedData.length === 0) {
+            console.error("Warning: cheerio extracted 0 elements from the table.");
+        }
 
         // 6. Pass data through the Math Engine
         const finalResult = calculateResults(scrapedData);
