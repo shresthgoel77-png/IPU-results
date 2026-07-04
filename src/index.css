@@ -1,0 +1,225 @@
+@import "tailwindcss";
+
+/* ── Custom Font ── */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+/* ── Dot pattern background for login screen ── */
+.dot-pattern {
+  background-image: radial-gradient(
+    rgba(148, 163, 184, 0.18) 1.2px,
+    transparent 1.2px
+  );
+  background-size: 28px 28px;
+  position: relative;
+}
+
+/* ── Ambient glow behind login card ── */
+.login-glow {
+  position: relative;
+}
+.login-glow::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 420px;
+  height: 420px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(
+    circle,
+    rgba(59, 130, 246, 0.12) 0%,
+    rgba(59, 130, 246, 0.04) 40%,
+    transparent 70%
+  );
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Glassmorphism card ── */
+.glass-card {
+  position: relative;
+  z-index: 1;
+  background: linear-gradient(
+    145deg,
+    rgba(30, 41, 59, 0.95) 0%,
+    rgba(15, 23, 42, 0.92) 100%
+  );
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  box-shadow:
+    0 0 0 1px rgba(148, 163, 184, 0.06),
+    0 25px 50px -12px rgba(0, 0, 0, 0.5),
+    0 0 80px -20px rgba(59, 130, 246, 0.1);
+}
+
+/* ── Custom input focus glow ── */
+.input-field {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(100, 116, 139, 0.45);
+  background: rgba(15, 23, 42, 0.6);
+  padding: 0.625rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: #fff;
+  outline: none;
+  transition: all 0.2s ease;
+}
+.input-field::placeholder {
+  color: rgba(100, 116, 139, 0.7);
+}
+.input-field:focus {
+  border-color: #3b82f6;
+  box-shadow:
+    0 0 0 3px rgba(59, 130, 246, 0.2),
+    0 0 20px -5px rgba(59, 130, 246, 0.15);
+}
+.input-field.pr-11 {
+  padding-right: 2.75rem;
+}
+
+/* ── Smooth scrollbar for dashboard table ── */
+.table-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+.table-scroll::-webkit-scrollbar-track {
+  background: #e5e7eb;
+  border-radius: 4px;
+}
+.table-scroll::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 4px;
+}
+
+/* ── Table row spacing ── */
+.result-table {
+  border-collapse: separate;
+  border-spacing: 0 4px;
+}
+.result-table thead tr {
+  border-spacing: 0;
+}
+.table-row-spaced td:first-child {
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+}
+.table-row-spaced td:last-child {
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
+}
+.summary-row td:first-child {
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+}
+.summary-row td:last-child {
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
+}
+.summary-row {
+  border-top: 2px solid #e2e8f0;
+}
+
+/* ── Spinner keyframes ── */
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-spin-slow {
+  animation: spin-slow 0.8s linear infinite;
+}
+
+/* ── Captcha box styling ── */
+.captcha-box {
+  display: flex;
+  height: 5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  border: 2px dashed rgba(100, 116, 139, 0.35);
+  background: rgba(15, 23, 42, 0.4);
+  transition: border-color 0.2s;
+}
+.captcha-box:hover {
+  border-color: rgba(100, 116, 139, 0.55);
+}
+
+/* ── Submit button ── */
+.btn-primary {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.625rem;
+  background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  box-shadow:
+    0 4px 14px -3px rgba(37, 99, 235, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition: all 0.2s ease;
+}
+.btn-primary:hover {
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+  box-shadow:
+    0 6px 20px -3px rgba(37, 99, 235, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  transform: translateY(-1px);
+}
+.btn-primary:active {
+  transform: translateY(0) scale(0.98);
+}
+.btn-primary:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ── Dashboard stat cards ── */
+.stat-card {
+  transition: all 0.25s ease;
+}
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 4px 12px -2px rgba(0, 0, 0, 0.08),
+    0 2px 6px -2px rgba(0, 0, 0, 0.04);
+}
+
+/* ── Tabular number cells (fixes tabular-nums in Tailwind v4) ── */
+.num-cell {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ── Stat card value ── */
+.stat-value {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  letter-spacing: -0.02em;
+}
+
+/* ── Base resets ── */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
