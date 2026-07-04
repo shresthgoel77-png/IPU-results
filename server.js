@@ -3,17 +3,21 @@ const puppeteer = require('puppeteer');
 const crypto = require('crypto');
 const cheerio = require('cheerio');
 
+// Import the Math Engine
+const { calculateResults } = require('./cgpaCalculator');
+
 const app = express();
 app.use(express.json());
+app.use(express.static('public'));
 
-// In-memory store for session cookies (since we aren't using a DB)
 const sessionStore = {};
-
-// Target Portal URL
 const TARGET_URL = '';
 
 /**
- * STEP 1: Fetch CAPTCHA and initialize a tracking session
+ * STEP 1: Fetch CAPTCHA and keep the browser instance alive
+ */
+/**
+ * STEP 1: Fetch CAPTCHA and keep the browser instance alive
  */
 app.get('/api/captcha', async (req, res) => {
     let browser;
@@ -21,20 +25,20 @@ app.get('/api/captcha', async (req, res) => {
         browser = await puppeteer.launch({ headless: true });
         const page = await browser.newPage();
         
-        await page.goto(TARGET_URL, { waitUntil: 'networkidle2' });
+        await page.goto(TARGET_URL.trim(), { waitUntil: 'networkidle2' });
 
-        const captchaSelector = '#captchaImage'; 
-        await page.waitForSelector(captchaSelector);
-        const captchaElement = await page.$(captchaSelector);
+        // FIXED: We are now targeting the actual image tag, not the input box.
+        // If '#captchaImage' doesn't work, try 'img[src*="captcha"]' which grabs any image with "captcha" in its source link.
+        const captchaImageSelector = '#captchaImage'; 
+        
+        await page.waitForSelector(captchaImageSelector);
+        const captchaElement = await page.$(captchaImageSelector);
         
         const captchaBuffer = await captchaElement.screenshot();
         const captchaBase64 = captchaBuffer.toString('base64');
 
-        const cookies = await page.cookies();
         const sessionId = crypto.randomUUID();
-        sessionStore[sessionId] = cookies; 
-
-        await browser.close();
+        sessionStore[sessionId] = { browser, page }; 
 
         res.json({
             sessionId: sessionId,
@@ -48,119 +52,116 @@ app.get('/api/captcha', async (req, res) => {
 });
 
 /**
- * STEP 2: Re-attach session, submit credentials, and scrape results
+ * STEP 2: Use the existing live page to fill details, select semester, and submit
  */
 app.post('/api/login-and-scrape', async (req, res) => {
-    const { enrollmentNumber, password, captchaText, sessionId } = req.body;
+    // NOTE: Added 'semester' to the destructured body parameters
+    const { enrollmentNumber, password, captchaText, sessionId, semester } = req.body;
 
-    // 1. Basic payload validation
     if (!enrollmentNumber || !password || !captchaText || !sessionId) {
-        return res.status(400).json({ error: 'Missing required parameters in request body.' });
+        return res.status(400).json({ error: 'Missing required parameters.' });
     }
 
-    // 2. Retrieve saved cookies from your in-memory store
-    const cookies = sessionStore[sessionId];
-    if (!cookies) {
+    const session = sessionStore[sessionId];
+    if (!session) {
         return res.status(400).json({ error: 'Invalid or expired session ID.' });
     }
 
-    let browser;
+    const { browser, page } = session;
+
     try {
-        // 3. Launch browser instance
-        browser = await puppeteer.launch({ headless: true });
-        const page = await browser.newPage();
-        
-        // 4. Inject the cookies from the previous CAPTCHA session
-        await page.setCookie(...cookies);
+        const usernameSelector = '#username';       
+        const passwordSelector = '#passwd';         
+        const captchaInputSelector = '#captcha';     
+        const loginButtonSelector = 'input[type="submit"]'; 
 
-        // 5. Navigate to the login portal page
-        await page.goto(TARGET_URL, { waitUntil: 'networkidle2' });
-
-        // === DIAGNOSTIC LOG START ===
-        // This will spy on the page and dump all input attributes to your terminal
-        const pageElements = await page.evaluate(() => {
-            return Array.from(document.querySelectorAll('input, select, button')).map(el => ({
-                tagName: el.tagName,
-                id: el.id ? `#${el.id}` : 'No ID',
-                name: el.name ? `input[name="${el.name}"]` : 'No Name',
-                type: el.type || ''
-            }));
-        });
-        console.log("🔍 [DIAGNOSTIC] All active elements discovered on GGSIPU page:");
-        console.table(pageElements);
-        // === DIAGNOSTIC LOG END ===
-
-        // 6. ACTUAL TARGET SELECTORS (Updated from image_a0d1fe.png)
-const usernameSelector = '#username';       // Changed from '#txtUser'
-const passwordSelector = '#password';       // Most likely ID inside the 2nd input-group
-const captchaInputSelector = '#captcha';     // Most likely ID or class inside captcha-group
-const loginButtonSelector = 'button[type="submit"]'; // Forms usually use a submit button, or check the ID inside action-group
-const errorSelector = '.error-message';     // Check what class/id pops up if login fails
-
-        // 7. Wait for the page form to become active and populate fields dynamically
-        await page.waitForSelector(usernameSelector);
+        // 1. Fill login details
         await page.type(usernameSelector, enrollmentNumber);
         await page.type(passwordSelector, password);
         await page.type(captchaInputSelector, captchaText);
 
-        // 8. Click login and wait for the resulting page to load completely
+        // 2. Click login and wait for the Dashboard (studenthome.jsp) to load
         await Promise.all([
             page.click(loginButtonSelector),
             page.waitForNavigation({ waitUntil: 'networkidle2' })
         ]);
 
-        // 9. Check if a validation error message/banner appeared on screen
-        const errorElement = await page.$(errorSelector);
-        if (errorElement) {
-            const errorText = await page.evaluate(el => el.textContent.trim(), errorElement);
-            if (errorText) {
-                await browser.close();
-                return res.status(400).json({ error: 'Login validation failed', details: errorText });
-            }
+        // 3. NEW WORKFLOW: Handle the Dashboard dropdown and 'GET RESULT' button
+        // Wait for the dropdown to appear on the screen
+        await page.waitForSelector('select'); 
+        
+        // Select the requested semester. Fallback to 'ALL' if the client didn't provide one.
+        const targetSemester = semester || 'ALL'; 
+        await page.select('select', targetSemester);
+
+        // Click the 'GET RESULT' button and wait for the marks table page to load
+        // ... (Previous code remains the same up to clicking "GET RESULT") ...
+
+        await Promise.all([
+            page.evaluate(() => {
+                const elements = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a'));
+                const getResultBtn = elements.find(el => (el.textContent || el.value || '').includes('GET RESULT'));
+                if (getResultBtn) getResultBtn.click();
+            }),
+            page.waitForNavigation({ waitUntil: 'networkidle2' })
+        ]);
+
+        // Capture a clean screenshot of the results table
+        const tableElement = await page.$('table'); // Target the main table
+        let imageBase64 = null;
+        if (tableElement) {
+            const imageBuffer = await tableElement.screenshot();
+            imageBase64 = imageBuffer.toString('base64');
         }
 
-        // 10. Grab the raw HTML content and shut down the browser to save memory
+        // 4. Read the page content containing the results
         const html = await page.content();
-        await browser.close();
-
-        // 11. Feed the raw HTML structure into Cheerio for parsing
+        
+        // 5. Feed to Cheerio for extraction
         const $ = cheerio.load(html);
         const scrapedData = [];
-
-        // Generic table row selector (Update this to target the result tables)
-        const tableRowsSelector = 'table tr'; 
         
-        $(tableRowsSelector).each((index, element) => {
+        // Extract based on the actual GGSIPU table structure (8 columns: S.No, Paper Code, Paper Name, Credits, Type, Internal, External, Total)
+        $('table tr').each((index, element) => {
             if (index === 0) return; // Skip headers
-
             const columns = $(element).find('td');
-            if (columns.length >= 5) {
+            
+            // Ensure row has the expected number of columns (>=8)
+            if (columns.length >= 8) {
                 scrapedData.push({
-                    subjectName: $(columns[0]).text().trim(),
-                    subjectCode: $(columns[1]).text().trim(),
-                    internalMarks: $(columns[2]).text().trim(),
-                    externalMarks: $(columns[3]).text().trim(),
-                    subjectCredits: $(columns[4]).text().trim()
+                    code: $(columns[1]).text().trim(),
+                    name: $(columns[2]).text().trim(),
+                    internal: parseInt($(columns[5]).text().trim()) || 0,
+                    external: parseInt($(columns[6]).text().trim()) || 0,
+                    total: parseInt($(columns[7]).text().trim()) || 0
                 });
             }
         });
 
-        // 12. Housekeeping: Remove session cookies from store if no longer required
-        delete sessionStore[sessionId];
+        // 6. Pass data through the Math Engine
+        const finalResult = calculateResults(scrapedData);
 
-        // 13. Deliver the extracted array data back to your client
+        // 7. Return the enriched JSON including the Base64 image
         res.json({
             success: true,
-            data: scrapedData
+            data: finalResult,
+            marksImage: imageBase64 ? `data:image/png;base64,${imageBase64}` : null
         });
 
     } catch (error) {
-        if (browser) await browser.close();
         res.status(500).json({ error: 'An error occurred during processing', details: error.message });
+    } finally {
+        // Enforce STRICT browser memory management
+        if (sessionStore[sessionId]) {
+            if (sessionStore[sessionId].browser) {
+                await sessionStore[sessionId].browser.close().catch(e => console.error("Memory management issue: ", e));
+            }
+            delete sessionStore[sessionId];
+        }
     }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Server is LIVE! Go to: http://localhost:${PORT}`);
 });
