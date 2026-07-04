@@ -19,6 +19,7 @@ const getGradePoint = (marks) => {
     return { grade: 'F', points: 0 };
 };
 
+
 const calculateResults = (subjects) => {
     let totalCredits = 0;
     let earnedPoints = 0;
