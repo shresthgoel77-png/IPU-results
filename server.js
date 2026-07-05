@@ -22,7 +22,18 @@
     app.get('/api/captcha', async (req, res) => {
         let browser;
         try {
-            browser = await puppeteer.launch({ headless: true });
+            browser = await puppeteer.launch({
+    headless: true,
+    args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-zygote",
+        "--single-process"
+    ]
+});
             const page = await browser.newPage();
             
             await page.goto(TARGET_URL.trim(), { waitUntil: 'networkidle2' });
