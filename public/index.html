@@ -196,6 +196,27 @@
             <button onclick="location.reload()" style="width: auto; margin:0; padding: 0.6rem 1.2rem; background: rgba(255,255,255,0.1); box-shadow:none;">Logout</button>
         </div>
 
+        <div class="glass-card mb-2" id="student-profile" style="display: none; padding: 1.5rem; text-align: left;">
+            <div style="display:flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 1rem; margin-bottom: 1rem;">
+                <h2 id="ui-student-name" style="margin: 0; color: #fff;">Student Name</h2>
+                <div id="ui-student-enroll" style="font-weight: 600; color: var(--accent);">Enrollment No</div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                <div>
+                    <span style="font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted);">Year of Admission</span>
+                    <strong style="display: block; font-size: 1.1rem; color: #e2e8f0;" id="ui-student-year">-</strong>
+                </div>
+                <div>
+                    <span style="font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted);">Institute</span>
+                    <strong style="display: block; font-size: 1.1rem; color: #e2e8f0;" id="ui-student-inst">-</strong>
+                </div>
+                <div>
+                    <span style="font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted);">Program</span>
+                    <strong style="display: block; font-size: 1.1rem; color: #e2e8f0;" id="ui-student-prog">-</strong>
+                </div>
+            </div>
+        </div>
+
         <div class="stats-grid">
             <div class="glass-card stat-card stat-marks">
                 <div class="stat-label">Total Marks</div>
@@ -323,7 +344,7 @@ async function handleFetch() {
         const result = await response.json();
         
         if (result.success && result.data) {
-            renderDashboard(result.data, result.marksImage);
+            renderDashboard(result.data, result.marksImage, result.studentProfile);
         } else {
             alert(result.error || 'Failed to fetch results.');
             fetchCaptcha(); // reload on failure
@@ -339,10 +360,20 @@ async function handleFetch() {
     }
 }
 
-function renderDashboard(data, marksImage) {
+function renderDashboard(data, marksImage, studentProfile) {
     // Hide Login, Show Dashboard
     document.getElementById('login-section').style.display = 'none';
     document.getElementById('dashboard-section').style.display = 'block';
+
+    // Populate Student Profile Details
+    if (studentProfile) {
+        document.getElementById('student-profile').style.display = 'block';
+        document.getElementById('ui-student-name').innerText = studentProfile.name || 'N/A';
+        document.getElementById('ui-student-enroll').innerText = `En. ${studentProfile.enrollment || 'N/A'}`;
+        document.getElementById('ui-student-year').innerText = studentProfile.admissionYear || 'N/A';
+        document.getElementById('ui-student-inst').innerText = studentProfile.institute || 'N/A';
+        document.getElementById('ui-student-prog').innerText = studentProfile.program || 'N/A';
+    }
 
     // Populate Stats
     document.getElementById('ui-marks').innerText = data.marksFraction.split('/')[0] + ' / ' + `<span style="font-size:1.25rem; color:#94a3b8; font-weight:600;">${data.marksFraction.split('/')[1]}</span>`;
