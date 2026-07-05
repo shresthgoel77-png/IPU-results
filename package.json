@@ -5,6 +5,7 @@
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
+    "build": "npx puppeteer browsers install chrome",
     "start": "node server.js"
   },
   "keywords": [],
@@ -12,6 +13,7 @@
   "license": "ISC",
   "dependencies": {
     "cheerio": "^1.2.0",
+    "cors": "^2.8.5",
     "express": "^5.2.1",
     "puppeteer": "^25.3.0"
   }

@@ -1,4 +1,5 @@
     const express = require('express');
+    const cors = require('cors');
     const puppeteer = require('puppeteer');
     const crypto = require('crypto');
     const cheerio = require('cheerio');
@@ -7,6 +8,7 @@
     const { calculateResults } = require('./cgpaCalculator');
 
     const app = express();
+    app.use(cors());
     app.use(express.json());
     app.use(express.static('public'));
 
@@ -22,34 +24,43 @@
     app.get('/api/captcha', async (req, res) => {
         let browser;
         try {
+            console.log(`[CAPTCHA] Start request. PUPPETEER_CACHE_DIR: ${process.env.PUPPETEER_CACHE_DIR || 'not set'}`);
+            console.log(`[CAPTCHA] Launching backend browser...`);
             browser = await puppeteer.launch({
-    headless: true,
-    args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--no-first-run",
-        "--no-zygote",
-        "--single-process"
-    ]
-});
+                headless: true,
+                args: [
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--no-first-run",
+                    "--no-zygote",
+                    "--single-process"
+                ]
+            });
+            console.log(`[CAPTCHA] Browser launched successfully.`);
+
+            console.log(`[CAPTCHA] Opening page...`);
             const page = await browser.newPage();
             
+            console.log(`[CAPTCHA] Navigating to: ${TARGET_URL.trim()}`);
             await page.goto(TARGET_URL.trim(), { waitUntil: 'networkidle2' });
+            console.log(`[CAPTCHA] Navigation successful.`);
 
-            // FIXED: We are now targeting the actual image tag, not the input box.
-            // If '#captchaImage' doesn't work, try 'img[src*="captcha"]' which grabs any image with "captcha" in its source link.
             const captchaImageSelector = '#captchaImage'; 
-            
-            await page.waitForSelector(captchaImageSelector);
+            console.log(`[CAPTCHA] Waiting for selector: ${captchaImageSelector}`);
+            await page.waitForSelector(captchaImageSelector, { timeout: 15000 });
+            console.log(`[CAPTCHA] Selector found. Obtaining element...`);
             const captchaElement = await page.$(captchaImageSelector);
             
+            console.log(`[CAPTCHA] Capturing captcha screenshot...`);
             const captchaBuffer = await captchaElement.screenshot();
             const captchaBase64 = captchaBuffer.toString('base64');
+            console.log(`[CAPTCHA] Screenshot captured successfully.`);
 
             const sessionId = crypto.randomUUID();
             sessionStore[sessionId] = { browser, page }; 
+            console.log(`[CAPTCHA] Session saved. ID: ${sessionId}`);
 
             res.json({
                 sessionId: sessionId,
@@ -57,7 +68,11 @@
             });
 
         } catch (error) {
-            if (browser) await browser.close();
+            console.error(`[CAPTCHA ERROR] Failed to fetch captcha:`, error.stack || error.message);
+            if (browser) {
+                console.log(`[CAPTCHA] Closing browser due to error...`);
+                await browser.close().catch(e => console.error(`[CAPTCHA] Error closing browser:`, e));
+            }
             res.status(500).json({ error: 'Failed to fetch Captcha', details: error.message });
         }
     });
@@ -66,16 +81,18 @@
      * STEP 2: Use the existing live page to fill details, select semester, and submit
      */
     app.post('/api/login-and-scrape', async (req, res) => {
-        // NOTE: Added 'semester' to the destructured body parameters
         const { enrollmentNumber, password, captchaText, sessionId, semester } = req.body;
-
+        console.log(`[SCRAPE] Start login-and-scrape request.`);
+        console.log(`[SCRAPE] Parameters: Enrollment: ${enrollmentNumber}, Sem: ${semester || 'ALL'}, Session: ${sessionId}`);
 
         if (!enrollmentNumber || !password || !captchaText || !sessionId) {
+            console.warn(`[SCRAPE] Rejected: Missing required body parameters.`);
             return res.status(400).json({ error: 'Missing required parameters.' });
         }
 
         const session = sessionStore[sessionId];
         if (!session) {
+            console.error(`[SCRAPE] Rejected: Session ID ${sessionId} is invalid or expired.`);
             return res.status(400).json({ error: 'Invalid or expired session ID.' });
         }
 
@@ -87,25 +104,25 @@
             const captchaInputSelector = '#captcha';     
             const loginButtonSelector = 'input[type="submit"]'; 
 
-            // 1. Fill login details
+            console.log(`[SCRAPE] Typing user details and captcha...`);
             await page.type(usernameSelector, enrollmentNumber);
             await page.type(passwordSelector, password);
             await page.type(captchaInputSelector, captchaText);
 
-            // 2. Click login and wait for the Dashboard (studenthome.jsp) to load
+            console.log(`[SCRAPE] Clicking login button and awaiting navigation...`);
             await Promise.all([
                 page.click(loginButtonSelector),
-                page.waitForNavigation({ waitUntil: 'networkidle2' })
+                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 })
             ]);
+            console.log(`[SCRAPE] Login navigation completed.`);
 
             // --- 1. DIAGNOSTIC DUMP (Run immediately after login networkidle2) ---
             const fs = require('fs');
             
-            // Catch diagnostics without halting the main script if they fail
             try {
+                console.log(`[SCRAPE] Creating diagnostic dashboard screenshot & HTML files...`);
                 await page.screenshot({ path: 'dashboard_diagnostic.png', fullPage: true });
 
-                // Extract Dropdowns
                 const selects = await page.evaluate(() => {
                     return Array.from(document.querySelectorAll('select')).map(s => ({
                         id: s.id,
@@ -116,7 +133,6 @@
                 console.log("\n=== DIAGNOSTIC: DROPDOWNS ===");
                 console.log(JSON.stringify(selects, null, 2));
 
-                // Extract Buttons
                 const buttons = await page.evaluate(() => {
                     return Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a')).map(b => ({
                         tag: b.tagName,
@@ -129,80 +145,71 @@
                 console.log("\n=== DIAGNOSTIC: BUTTONS ===");
                 console.log(JSON.stringify(buttons, null, 2));
 
-                // Save raw HTML before interacting
                 const rawContent = await page.content();
                 fs.writeFileSync('dashboard.html', rawContent);
                 console.log("=== HTML Dumped to dashboard.html ===\n");
             } catch (diagErr) {
-                console.log("Diagnostic dump failed, continuing...", diagErr);
+                console.warn("[SCRAPE] Diagnostic profiling dump failed, continuing...", diagErr.message);
             }
-            // ------------------------------------------------------------------
 
             // --- 2. BULLETPROOF DROPDOWN & FETCH LOGIC ---
-            // TODO: Update these generic selectors with the exact IDs from the diagnostic dump logs!
-            const SEMESTER_DROPDOWN_ID = 'select'; // Change this once you know the exact ID
-            const SUBMIT_BUTTON_ID = 'input[type="submit"]'; // Change this to the exact button ID or exact selector
+            const SEMESTER_DROPDOWN_ID = 'select'; 
+            const SUBMIT_BUTTON_ID = 'input[type="submit"]'; 
 
             const targetSemester = semester || 'ALL'; 
+            console.log(`[SCRAPE] Selecting target semester dropdown option: ${targetSemester}`);
             
-            // Wait for Dropdown
             await page.waitForSelector(SEMESTER_DROPDOWN_ID, { timeout: 15000 });
             
-            // Resilient Dropdown Selection via Native Evaluation (Bypasses rendering/overlap issues)
             await page.evaluate((selector, val) => {
                 const selectEl = document.querySelector(selector);
                 if (selectEl) {
-                    // If the option exists, select it
                     const optionExists = Array.from(selectEl.options).some(opt => opt.value === val);
                     if (optionExists) {
                         selectEl.value = val;
                     } else if (selectEl.options.length > 0) {
-                        selectEl.value = selectEl.options[1].value; // fallback
+                        selectEl.value = selectEl.options[1].value;
                     }
-                    // Trigger Change Events (crucial for ASP.NET / __doPostBack)
                     selectEl.dispatchEvent(new Event('change', { bubbles: true }));
                 }
             }, SEMESTER_DROPDOWN_ID, targetSemester);
             
-            // Give AJAX a moment if there's a postback after selecting semester
+            console.log(`[SCRAPE] Waiting 1s postback buffer...`);
             await new Promise(resolve => setTimeout(resolve, 1000));
 
-            // Wait for Submit button to be present
+            console.log(`[SCRAPE] Waiting for submit button: ${SUBMIT_BUTTON_ID}`);
             await page.waitForSelector(SUBMIT_BUTTON_ID, { timeout: 15000 });
 
-            // Resilient Click and Wait
-            console.log("Attempting to click submit button and fetch marks...");
+            console.log("[SCRAPE] Attempting to click submit button and fetch marks...");
             await Promise.all([
                 page.evaluate((selector) => {
                     const btn = document.querySelector(selector);
                     if (btn) btn.click();
                 }, SUBMIT_BUTTON_ID),
-                // We use a promise race: wait for network payload OR a timeout.
-                // This handles BOTH traditional page navigations and AJAX table redraws.
-                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => console.log('Navigation wait completed or timed out (AJAX update likely).'))
+                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => console.log('[SCRAPE] Navigation wait resolved or timed out (AJAX redraw detected).'))
             ]);
 
-            // Explicitly wait for the target table block to render
-            await page.waitForSelector('table', { timeout: 15000 }).catch(() => console.log("Warning: No table found immediately after click."));
+            console.log(`[SCRAPE] Waiting for result marks tables to render...`);
+            await page.waitForSelector('table', { timeout: 15000 }).catch(() => console.warn("[SCRAPE] Warning: No result table found immediately."));
 
-            // Capture Screenshot of the marks area safely
-            const tableElement = await page.$('table'); 
             let imageBase64 = null;
             try {
-            const imageBuffer = await page.screenshot({ fullPage: true });
-            imageBase64 = imageBuffer.toString('base64');
-        } catch (err) {
-            console.error('Screenshot failed:', err.message);
-        }
+                console.log(`[SCRAPE] Capturing marks screenshot...`);
+                const imageBuffer = await page.screenshot({ fullPage: true });
+                imageBase64 = imageBuffer.toString('base64');
+                console.log(`[SCRAPE] Marks screenshot successful.`);
+            } catch (err) {
+                console.error('[SCRAPE ERROR] Screenshot failed:', err.message);
+            }
+
             // --- 3. ADVANCED TABLE SCRAPING (Cheerio) ---
+            console.log(`[SCRAPE] Parsing HTML using Cheerio...`);
             const finalHtml = await page.content();
             const $ = cheerio.load(finalHtml);
             const scrapedData = [];
             
-            // --- NEW: STUDENT PROFILE EXTRACTION ---
             const studentProfile = { name: "N/A", enrollment: "N/A", admissionYear: "N/A", institute: "N/A", program: "N/A" };
             
-            // Sweep all table cells for the labels and extract the immediate next sibling cell or split by colon
             $('td, th, span').each((i, el) => {
                 const rawText = $(el).text();
                 const text = rawText.trim().toLowerCase();
@@ -210,12 +217,10 @@
                 
                 const extractValue = (label) => {
                     if (text.includes(label)) {
-                        // If value is in the same cell separated by colon
                         if (rawText.includes(':')) {
                             const parts = rawText.split(':');
                             if (parts.length > 1 && parts[1].trim() !== '') return parts[1].trim();
                         }
-                        // Otherwise, it's likely in the adjacent cell
                         if (nextText) return nextText;
                     }
                     return null;
@@ -227,17 +232,14 @@
                 if (extractValue('institution') || extractValue('institute')) studentProfile.institute = extractValue('institution') || extractValue('institute');
                 if (extractValue('programme') || extractValue('program name')) studentProfile.program = extractValue('programme') || extractValue('program name');
             });
-            // ----------------------------------------
+            console.log(`[SCRAPE] Extracted Profile: ${JSON.stringify(studentProfile)}`);
 
-            // Resilient traversal of tables (handles nested layouts)
             $('table tr').each((index, element) => {
                 const columns = $(element).find('td, th');
                 
-                // Check for >= 6 columns to accommodate the explicit 0-5 index layout.
                 if (columns.length >= 6) {
-                    // Ensure it's not a header row 
                     const rowText = $(element).text().toLowerCase();
-                    if (rowText.includes('paper name') || rowText.includes('sr. no')) return; // Skip headers
+                    if (rowText.includes('paper name') || rowText.includes('sr. no')) return; 
 
                     const code = $(columns[1]).text().trim();
                     const name = $(columns[2]).text().trim();
@@ -247,21 +249,19 @@
                     scrapedData.push({
                         code: code,
                         name: name,
-                        internal: $(columns[3]).text().trim(), // Explicit target [3]
-                        external: $(columns[4]).text().trim(), // Explicit target [4]
-                        total: $(columns[5]).text().trim()     // Explicit target [5]
+                        internal: $(columns[3]).text().trim(), 
+                        external: $(columns[4]).text().trim(), 
+                        total: $(columns[5]).text().trim()     
                     });
                 }
             });
 
-            if (scrapedData.length === 0) {
-                console.error("Warning: cheerio extracted 0 elements from the table.");
-            }
+            console.log(`[SCRAPE] Cheerio scraped subjects: ${scrapedData.length}`);
 
-            // 6. Pass data through the Math Engine
+            console.log(`[SCRAPE] Running Math calculation engine...`);
             const finalResult = calculateResults(scrapedData);
 
-            // 7. Return the enriched JSON including the Base64 image and student profile
+            console.log(`[SCRAPE] Result successfully calculated. Returning response.`);
             res.json({
                 success: true,
                 studentProfile: studentProfile,
@@ -270,19 +270,20 @@
             });
 
         } catch (error) {
+            console.error(`[SCRAPE ERROR] Pipeline Execution Failed:`, error.stack || error.message);
             res.status(500).json({ error: 'An error occurred during processing', details: error.message });
         } finally {
-            // Enforce STRICT browser memory management
             if (sessionStore[sessionId]) {
+                console.log(`[SCRAPE] Performing memory cleanup and closing session browser...`);
                 if (sessionStore[sessionId].browser) {
-                    await sessionStore[sessionId].browser.close().catch(e => console.error("Memory management issue: ", e));
+                    await sessionStore[sessionId].browser.close().catch(e => console.error("[SCRAPE] Memory close helper error: ", e));
                 }
                 delete sessionStore[sessionId];
+                console.log(`[SCRAPE] Session store cleaned.`);
             }
         }
     });
 
-    
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
         console.log(`Server is LIVE! Go to: http://localhost:${PORT}`);
