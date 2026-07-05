@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GGSIPU Dashboard</title>
+    <title>GGSIPU Results</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
@@ -149,7 +149,7 @@
 <div class="container">
     <!-- LOGIN SCREEN -->
     <div id="login-section" class="glass-card">
-        <h2>GGSIPU Portal</h2>
+        <h2>GGSIPU Results</h2>
         
         <div class="input-group">
             <label for="enroll">Enrollment Number</label>
@@ -186,7 +186,6 @@
     <!-- DASHBOARD SCREEN -->
     <div id="dashboard-section">
         <div class="header">
-            <h1>Academic Overview</h1>
             <button onclick="location.reload()" style="width: auto; margin:0; padding: 0.6rem 1.2rem; background: rgba(255,255,255,0.1); box-shadow:none;">Logout</button>
         </div>
 
@@ -431,7 +430,7 @@ function renderChart(labels, internalData, externalData) {
 
     marksChartInstance = new Chart(ctx, {
         type: 'bar',
-        data: {
+        data: { 
             labels: labels,
             datasets: [
                 {
